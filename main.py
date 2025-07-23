@@ -63,14 +63,19 @@ def main():
         print(f"API error: {e}")
         return 1
     
-    # print(response.text)
-    # print(response.candidates[0].content.parts)
-
     for part in response.candidates[0].content.parts:
         if part.function_call:
-            print(f"Calling function: {part.function_call.name}({part.function_call.args})")
+            function_call_result = call_function(part.function_call, verbose=True)
+
+            # Check if the function call succeeded and has a result
+            if not hasattr(function_call_result.parts[0], "function_response") or \
+            not hasattr(function_call_result.parts[0].function_response, "response"):
+                raise RuntimeError("Function call failed: missing function_response.response")
+
+            print(f"-> {function_call_result.parts[0].function_response.response}")
         elif part.text:
             print(part.text)
+
 
     if len(sys.argv) == 3:
         print(f"User prompt: {user_prompt}")
@@ -78,5 +83,58 @@ def main():
         print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
 
 
+def call_function(function_call_part, verbose=False):
+    import functions.get_files_info as get_files_info
+    import functions.get_file_content as get_file_content
+    import functions.write_file as write_file
+    import functions.run_python as run_python
+
+    function_name = function_call_part.name
+    args = dict(function_call_part.args)
+    
+    # Always inject working_directory manually
+    args["working_directory"] = "./calculator"
+
+    if verbose:
+        print(f"Calling function: {function_name}({args})")
+    else:
+        print(f" - Calling function: {function_name}")
+
+    # Dictionary mapping function names to actual functions
+    function_map = {
+        "get_files_info": get_files_info.get_files_info,
+        "get_file_content": get_file_content.get_file_content,
+        "write_file": write_file.write_file,
+        "run_python_file": run_python.run_python_file
+    }
+
+    if function_name not in function_map:
+        return types.Content(
+            role="tool",
+            parts=[
+                types.Part.from_function_response(
+                    name=function_name,
+                    response={"error": f"Unknown function: {function_name}"},
+                )
+            ],
+        )
+
+    try:
+        result = function_map[function_name](**args)
+    except Exception as e:
+        result = f"Function raised an error: {str(e)}"
+
+    return types.Content(
+        role="tool",
+        parts=[
+            types.Part.from_function_response(
+                name=function_name,
+                response={"result": result},
+            )
+        ],
+    )
+
+
 if __name__ == "__main__":
     sys.exit(main())
+
