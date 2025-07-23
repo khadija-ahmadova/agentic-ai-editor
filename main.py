@@ -50,37 +50,49 @@ def main():
         ]
     )
 
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.0-flash-001",
-            contents=messages,
-            config=types.GenerateContentConfig(
-                tools=[available_functions],
-                system_instruction=system_prompt
+    MAX_ITERATIONS = 20
+    for i in range(MAX_ITERATIONS):
+        print(f'\n--- Iteration {i + 1} ---')
+
+        try:
+            # call LLM with entire conversation history
+            response = client.models.generate_content(
+                model="gemini-2.0-flash-001",
+                contents=messages,
+                config=types.GenerateContentConfig(
+                    tools=[available_functions],
+                    system_instruction=system_prompt
+                )
             )
-        )
-    except Exception as e:
-        print(f"API error: {e}")
-        return 1
-    
-    for part in response.candidates[0].content.parts:
-        if part.function_call:
-            function_call_result = call_function(part.function_call, verbose=True)
+        except Exception as e:
+            print(f"API error: {e}")
+            return 1
+        
+        for candidate in response.candidates:
+            messages.append(candidate.content)
+        
+            has_function_call = False
+            for part in candidate.content.parts:
+                if part.function_call:
+                    has_function_call = True
+                    print(f"Model wants to call: {part.function_call.name}")
 
-            # Check if the function call succeeded and has a result
-            if not hasattr(function_call_result.parts[0], "function_response") or \
-            not hasattr(function_call_result.parts[0].function_response, "response"):
-                raise RuntimeError("Function call failed: missing function_response.response")
+                    function_call_result = call_function(part.function_call, verbose=True)
 
-            print(f"-> {function_call_result.parts[0].function_response.response}")
-        elif part.text:
-            print(part.text)
+                    # Check if the function call succeeded and has a result
+                    if not hasattr(function_call_result.parts[0], "function_response") or \
+                    not hasattr(function_call_result.parts[0].function_response, "response"):
+                        raise RuntimeError("Function call failed: missing function_response.response")
 
+                    print(f"-> {function_call_result.parts[0].function_response.response}")
 
-    if len(sys.argv) == 3:
-        print(f"User prompt: {user_prompt}")
-        print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
-        print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
+                    messages.append(function_call_result)
+
+                elif part.text:
+                    print(part.text)
+
+        if not has_function_call:
+            break
 
 
 def call_function(function_call_part, verbose=False):
